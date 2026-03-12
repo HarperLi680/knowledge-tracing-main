@@ -103,6 +103,30 @@ Using Ryan's Brute Force BKT located at `Models/bkt_bf.py`.
 ## Data cleaning
 The data preprocess pipeline has entry script in `preprocess/preprocess.py`, where it preprocesses the raw Assessment09 data from `data/raw/skill_builder_data_corrected_collapsed.csv`. The cleaned data are train and test splitted in `data/processed`. The train data are further processed for tabular and sequential models under `data/processed/train/tabular` and `data/processed/train/sequential` respectively.
 
+---
+
+## Repository Structure
+
+### Top-level scripts
+- `preprocess/preprocess.py`: end-to-end preprocessing pipeline (clean → split → format).
+- `generate_predictions.py`: trains each model across folds and writes raw predictions to `output/predictions.json`.
+- `evaluate_predictions.py`: aligns predictions back to row-level data and produces:
+	- `output/combined_output.csv` (original data + model prediction columns)
+	- `output/metrics.json` (AUC/Accuracy/RMSE per model)
+- `unit_test.py`: quick sanity check that each model train/predict function runs for one fold.
+
+### Folders
+- `Models/`: model implementations and `train_predict_*` entry points used by `generate_predictions.py`.
+- `Utils/`: helper utilities used by deep learning models (e.g., ATKT/DSAKT).
+- `preprocess/`: data cleaning/splitting/formatting modules.
+- `data/`:
+	- `raw/`: raw dataset file(s) (input to preprocessing)
+	- `processed/`: preprocessed outputs
+		- `train/tabular/`: fold CSVs for traditional models (BKT/PFA/KTM/Elo)
+		- `train/sequential/`: fold files for sequential models (ATKT/DSAKT)
+		- `test/`: held-out test split (currently not used by the provided scripts)
+- `output/`: generated artifacts (`predictions.json`, `combined_output.csv`, `metrics.json`).
+
 ## Unit Test, Prediction, and Evaluation Generation
 First try to run `unit_test.py` from the repository root to ensure all model train prediction methods work properly for one fold of the training data. The main entry point for this repo is at `generate_predictions.py` where it trains models on 4 fold data and validate model on the remaining one fold data. The script produces a prediction artifact `output/predictions.json`, which is used by the `evaluate_predictions.py` script to generate metrics `output/metrics.json` to compare performance of different models. It is **important** to note that the test data in `data/processed/test` is NOT USED in the current scripts. The current performance metric is based on the validation dataset.
 
