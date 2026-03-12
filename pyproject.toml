@@ -1,0 +1,15 @@
+[project]
+name = "knowledge-tracing-models-main"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "elo-rating>=0.0.2",
+    "numpy>=2.2.6",
+    "pandas>=2.2.3",
+    "requests>=2.32.3",
+    "scikit-learn>=1.6.1",
+    "scipy>=1.15.0",
+    "tqdm>=4.67.1",
+]
