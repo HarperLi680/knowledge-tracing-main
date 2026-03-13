@@ -2,6 +2,7 @@ import os
 
 from Models.DSAKT import train_predict_DSAKT
 from Models.ATKT import train_predict_ATKT
+from Models.DKT import train_predict_DKT
 from Models.KTM import train_predict_KTM
 from Models.bkt_bf import train_predict_BKT
 from Models.PFA import train_predict_PFA
@@ -81,6 +82,24 @@ def test_train_predict_ATKT():
     )
     assert len(preds) == len(labels), "ATKT: Prediction-label length mismatch"
 
+def test_train_predict_DKT():
+    files = sorted([f for f in os.listdir(SEQUENTIAL_DATA) if f.endswith(".csv")])
+    all_files = [os.path.join(SEQUENTIAL_DATA, f) for f in files[:3]]
+    n_skill = calculate_n_skill(all_files)
+
+    preds, labels = train_predict_DKT(
+        train_path=[all_files[0]],
+        valid_path=all_files[1],
+        test_path=all_files[2],
+        n_skill=n_skill,
+        hidden_dim=100,
+        num_layers=1,
+        dropout=0.2,
+        lr=1e-3,
+        batch_size=32,
+        epochs=100
+    )
+    assert len(preds) == len(labels), "DKT: Prediction-label length mismatch"
 
 if __name__ == "__main__":
     test_train_predict_BKT()
@@ -95,4 +114,6 @@ if __name__ == "__main__":
     print("ATKT test passed!")
     test_train_predict_DSAKT()
     print("DSAKT test passed!")
+    test_train_predict_DKT()
+    print("DKT test passed!")
     print("All tests passed!")

@@ -119,6 +119,54 @@ def align_dsakt_predictions(seq_file, preds):
 
     return np.array(aligned, dtype=float)
 
+def align_dkt_predictions(seq_file, preds):
+    """
+    Align DKT predictions back to row-level interactions.
+
+    DKT predicts next-step correctness for each original sequence:
+    for a sequence of length L, it returns L-1 predictions corresponding
+    to original positions 1..L-1.
+
+    So alignment is:
+        [NaN, pred_0, pred_1, ..., pred_(L-2)]
+    for each student sequence.
+    """
+    preds = np.asarray(preds, dtype=float)
+    aligned = []
+    pred_ptr = 0
+
+    with open(seq_file, 'r') as f:
+        line_id = 0
+
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+
+            if line_id % 4 == 1:
+                skills = [x for x in line.split(',') if x != ""]
+                seq_len = len(skills)
+
+                if seq_len == 0:
+                    continue
+
+                aligned.append(np.nan)
+
+                n_preds = seq_len - 1
+                if n_preds > 0:
+                    aligned.extend(preds[pred_ptr:pred_ptr + n_preds])
+                    pred_ptr += n_preds
+
+            line_id += 1
+
+    if pred_ptr != len(preds):
+        raise ValueError(
+            f"DKT alignment mismatch: consumed {pred_ptr} predictions, "
+            f"but model returned {len(preds)}"
+        )
+
+    return np.array(aligned, dtype=float)
+
 def create_combined_csv(
     traditional_data_folder,
     traditional_files,
@@ -151,6 +199,12 @@ def create_combined_csv(
 
             elif model_name == 'DSAKT':
                 aligned_preds = align_dsakt_predictions(
+                    seq_file=seq_file,
+                    preds=preds
+                )
+            
+            elif model_name == 'DKT':
+                aligned_preds = align_dkt_predictions(
                     seq_file=seq_file,
                     preds=preds
                 )

@@ -12,7 +12,8 @@ from Models.PFA import train_predict_PFA
 from Models.KTM import train_predict_KTM
 from Models.Elo import train_predict_Elo
 from Models.ATKT import train_predict_ATKT
-from Models.DSAKT import train_predict_DSAKT  # Import the DSAKT model
+from Models.DSAKT import train_predict_DSAKT
+from Models.DKT import train_predict_DKT
 
 def calculate_n_skill(data_files):
     all_skills = set()
@@ -119,6 +120,29 @@ def train_and_predict_deep_learning(data_folder, train_folds, test_fold, model_n
             print(f"Error in train_predict_DSAKT: {str(e)}")
             raise
     
+    elif model_name == 'DKT':
+        all_data_files = train_data + [valid_path, test_path]
+        n_skill = calculate_n_skill(all_data_files)
+        print(f"Calculated n_skill for DKT: {n_skill}")
+
+        dkt_params = {
+            'n_skill': n_skill,
+            'hidden_dim': 100,
+            'num_layers': 1,
+            'dropout': 0.2,
+            'lr': 1e-3,
+            'batch_size': 32,
+            'epochs': 40
+        }
+
+        preds, _ = train_predict_DKT(
+            train_path=train_data,
+            valid_path=valid_path,
+            test_path=test_path,
+            **dkt_params
+        )
+        return preds
+    
     else:
         raise ValueError(f"Unknown deep learning model: {model_name}")
 
@@ -134,7 +158,8 @@ def get_original_data_predictions(traditional_data_folder, dl_data_folder):
         'KTM': {},
         'Elo': {},
         'ATKT': {},
-        'DSAKT': {}  # Add DSAKT to the predictions dictionary
+        'DSAKT': {},
+        'DKT': {}
     }
     
     traditional_models = {
@@ -153,7 +178,7 @@ def get_original_data_predictions(traditional_data_folder, dl_data_folder):
             all_predictions[model_name][test_fold] = preds
     
     # Train and collect predictions for deep learning models
-    deep_learning_models = ['ATKT','DSAKT']
+    deep_learning_models = ['ATKT','DSAKT','DKT']
     for model_name in deep_learning_models:
         print(f"\nTraining and predicting with {model_name}...")
         for test_fold in range(num_folds_dl):
@@ -162,54 +187,6 @@ def get_original_data_predictions(traditional_data_folder, dl_data_folder):
             all_predictions[model_name][test_fold] = preds
     
     return all_predictions
-
-def create_combined_csv(traditional_data_folder, traditional_files, all_predictions, num_folds, output_file):
-    combined_data = []
-    for fold in range(num_folds):
-        fold_file = os.path.join(traditional_data_folder, traditional_files[fold])
-        fold_data = pd.read_csv(fold_file)
-        
-        fold_data['fold'] = fold
-        
-        for model_name in all_predictions.keys():
-            print(f"Fold {fold}, {model_name}: Predictions shape: {len(all_predictions[model_name][fold])}")
-            
-            if len(all_predictions[model_name][fold]) != len(fold_data):
-                print(f"Mismatch in predictions for {model_name} in fold {fold}")
-                # Align predictions with original data for all models
-                aligned_preds = np.full(len(fold_data), np.nan)
-                aligned_preds[-len(all_predictions[model_name][fold]):] = all_predictions[model_name][fold]
-                fold_data[f'{model_name}_prediction'] = aligned_preds
-            else:
-                fold_data[f'{model_name}_prediction'] = all_predictions[model_name][fold]
-        
-        combined_data.append(fold_data)
-    
-    final_df = pd.concat(combined_data, ignore_index=True)
-    final_df.to_csv(output_file, index=False)
-    print(f"Combined data saved to {output_file}")
-    return final_df
-
-def calculate_metrics(final_df, all_predictions):
-    for model_name in all_predictions.keys():
-        print(f"\nMetrics for {model_name}:")
-        predictions = final_df[f'{model_name}_prediction']
-        actual = final_df['correct']
-        
-        # Remove rows where either predictions or actual values are NaN
-        valid_indices = (~predictions.isna()) & (~actual.isna())
-        valid_predictions = predictions[valid_indices]
-        valid_actual = actual[valid_indices]
-        
-        fpr, tpr, _ = metrics.roc_curve(valid_actual, valid_predictions, pos_label=1)
-        auc = metrics.auc(fpr, tpr)
-        acc = metrics.accuracy_score(valid_actual, [1 if i >= 0.5 else 0 for i in valid_predictions])
-        rmse = math.sqrt(metrics.mean_squared_error(valid_actual, valid_predictions))
-        
-        print(f"  AUC: {auc:.4f}")
-        print(f"  Accuracy: {acc:.4f}")
-        print(f"  RMSE: {rmse:.4f}")
-        print(f"  Valid data points: {sum(valid_indices)} out of {len(predictions)}")
 
 def main(traditional_data_folder, dl_data_folder, output_file):
     all_predictions = get_original_data_predictions(
