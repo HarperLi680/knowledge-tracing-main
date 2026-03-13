@@ -101,7 +101,7 @@ This will install the pure Python version from PyPI, which is simpler but much s
 Using Ryan's Brute Force BKT located at `Models/bkt_bf.py`.
 
 ## Data cleaning
-The data preprocess pipeline has entry script in `preprocess/preprocess.py`, where it preprocesses the raw Assessment09 data from `data/raw/skill_builder_data_corrected_collapsed.csv`. The cleaned data are train and test splitted in `data/processed`. The train data are further processed for tabular and sequential models under `data/processed/train/tabular` and `data/processed/train/sequential` respectively.
+The data preprocess pipeline has an entry script in `preprocess/preprocess.py`, where it preprocesses the raw Assessment09 data from `data/raw/skill_builder_data_corrected_collapsed.csv`. The cleaned data are train and test, split in `data/processed`. The train data are further processed for tabular and sequential models under `data/processed/train/tabular` and `data/processed/train/sequential`, respectively.
 
 ---
 
@@ -123,12 +123,9 @@ The data preprocess pipeline has entry script in `preprocess/preprocess.py`, whe
 	- `raw/`: raw dataset file(s) (input to preprocessing)
 	- `processed/`: preprocessed outputs
 		- `train/tabular/`: fold CSVs for traditional models (BKT/PFA/KTM/Elo)
-		- `train/sequential/`: fold files for sequential models (ATKT/DSAKT)
+		- `train/sequential/`: fold files for sequential models (ATKT/DSAKT/DKT)
 		- `test/`: held-out test split (currently not used by the provided scripts)
 - `output/`: generated artifacts (`predictions.json`, `combined_output.csv`, `metrics.json`).
 
 ## Unit Test, Prediction, and Evaluation Generation
-First try to run `unit_test.py` from the repository root to ensure all model train prediction methods work properly for one fold of the training data. The main entry point for this repo is at `generate_predictions.py` where it trains models on 4 fold data and validate model on the remaining one fold data. The script produces a prediction artifact `output/predictions.json`, which is used by the `evaluate_predictions.py` script to generate metrics `output/metrics.json` to compare performance of different models. It is **important** to note that the test data in `data/processed/test` is NOT USED in the current scripts. The current performance metric is based on the validation dataset.
-
-## Reference
-This current repo is refactored from the old version `Knowledge-Tracing-Models-main_origin.zip`. Please check this source if your reference. 
+First, try to run `unit_test.py` from the repository root to ensure all model training prediction methods work properly for one fold of the training data. The main entry point for this repo is at `generate_predictions.py`, where it trains models on 5-fold data and validates the model on the remaining one fold of data. The script produces a prediction artifact `output/predictions.json`, which is used by the `evaluate_predictions.py` script to generate metrics `output/metrics.json` to compare the performance of different models. It is **important** to note that the test data in `data/processed/test` is NOT USED in the current scripts. The current performance metric is based on the validation dataset.
