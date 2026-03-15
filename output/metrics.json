@@ -1,0 +1,58 @@
+{
+  "bkt_bf": {
+    "AUC": 0.7144171996012081,
+    "Accuracy": 0.7096039002415423,
+    "RMSE": 0.4418317792592232,
+    "Valid_data_points": 337415,
+    "Total_data_points": 337415
+  },
+  "BKT_forgetting": {
+    "AUC": 0.6961042771921038,
+    "Accuracy": 0.6848628543485026,
+    "RMSE": 0.4594425126199511,
+    "Valid_data_points": 337415,
+    "Total_data_points": 337415
+  },
+  "PFA": {
+    "AUC": 0.7042977903577979,
+    "Accuracy": 0.6996161996354637,
+    "RMSE": 0.4462713876103928,
+    "Valid_data_points": 337415,
+    "Total_data_points": 337415
+  },
+  "ELO": {
+    "AUC": 0.6440982932059662,
+    "Accuracy": 0.6125187084154528,
+    "RMSE": 0.5082510357943959,
+    "Valid_data_points": 337415,
+    "Total_data_points": 337415
+  },
+  "KTM": {
+    "AUC": 0.7318925883756447,
+    "Accuracy": 0.7090852511002771,
+    "RMSE": 0.4379630002467138,
+    "Valid_data_points": 337415,
+    "Total_data_points": 337415
+  },
+  "DKT": {
+    "AUC": 0.8242211847342391,
+    "Accuracy": 0.7728652397867494,
+    "RMSE": 0.3918986864343013,
+    "Valid_data_points": 332754,
+    "Total_data_points": 337415
+  },
+  "DSAKT": {
+    "AUC": 0.8098688898576025,
+    "Accuracy": 0.7646910330153808,
+    "RMSE": 0.3984634766557548,
+    "Valid_data_points": 332754,
+    "Total_data_points": 337415
+  },
+  "ATKT": {
+    "AUC": 0.8075926006369121,
+    "Accuracy": 0.7640872590764105,
+    "RMSE": 0.40242520062741205,
+    "Valid_data_points": 331381,
+    "Total_data_points": 337415
+  }
+}
