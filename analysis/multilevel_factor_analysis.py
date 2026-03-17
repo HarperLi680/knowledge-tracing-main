@@ -1,13 +1,14 @@
 import argparse
-from pathlib import Path
+import shutil
 import warnings
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 from sklearn.decomposition import FactorAnalysis
+from sklearn.exceptions import ConvergenceWarning as SKConvergenceWarning
 from sklearn.preprocessing import StandardScaler
-from statsmodels.tools.sm_exceptions import ConvergenceWarning
-
+from statsmodels.tools.sm_exceptions import ConvergenceWarning as SMConvergenceWarning
 
 DEFAULT_PREDICTION_COLUMNS = [
     "bkt_bf_prediction",
@@ -24,9 +25,7 @@ CORE_OUTPUT_FILES = {
     "within_correlation_matrix.csv",
     "between_correlation_matrix.csv",
     "factor_model_comparison.csv",
-    "within_factor_loadings1.csv",
     "within_factor_loadings2.csv",
-    "between_factor_loadings1.csv",
     "between_factor_loadings2.csv",
     "icc_by_measure.csv",
 }
@@ -34,63 +33,42 @@ CORE_OUTPUT_FILES = {
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description=(
-            "Compute mixed-effects within/between correlations and "
-            "separate within/between factor analyses."
-        )
+        description="KT multilevel decomposition + factor analysis + mixed model diagnostic"
     )
-    parser.add_argument(
-        "--input",
-        default="output/combined_output.csv",
-        help="Path to combined prediction table.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="output/factor_analysis",
-        help="Directory for analysis outputs.",
-    )
-    parser.add_argument(
-        "--user-col",
-        default="user",
-        help="Student/user ID column.",
-    )
-    parser.add_argument(
-        "--pred-cols",
-        nargs="+",
-        default=DEFAULT_PREDICTION_COLUMNS,
-        help="Prediction variables used in analysis.",
-    )
-    parser.add_argument(
-        "--missing",
-        choices=["complete", "mean_impute"],
-        default="complete",
-        help=(
-            "Missing handling for factor-analysis table. "
-            "'complete' = keep rows where all prediction columns are present."
-        ),
-    )
-    parser.add_argument(
-        "--random-state",
-        type=int,
-        default=42,
-        help="Random seed for FactorAnalysis.",
-    )
-    parser.add_argument(
-        "--mixed-maxiter",
-        type=int,
-        default=200,
-        help="Maximum iterations for each MixedLM fit.",
-    )
+    parser.add_argument("--input", default="output/combined_output.csv")
+    parser.add_argument("--output-dir", default="output/factor_analysis")
+    parser.add_argument("--user-col", default="user")
+    parser.add_argument("--pred-cols", nargs="+", default=DEFAULT_PREDICTION_COLUMNS)
+    parser.add_argument("--missing", choices=["complete", "mean_impute"], default="complete")
+    parser.add_argument("--random-state", type=int, default=42)
+    parser.add_argument("--max-factors", type=int, default=4)
+    parser.add_argument("--fa-maxiter", type=int, default=800)
+    parser.add_argument("--mixed-maxiter", type=int, default=200)
+    parser.add_argument("--mixed-boundary-threshold", type=float, default=1e-8)
     return parser.parse_args()
 
 
-def assert_columns_exist(df: pd.DataFrame, user_col: str, pred_cols):
-    missing_cols = [c for c in [user_col, *pred_cols] if c not in df.columns]
-    if missing_cols:
-        raise ValueError(f"Missing required columns: {missing_cols}")
+def _to_scalar(value) -> float:
+    arr = np.asarray(value, dtype=float)
+    if arr.size == 0:
+        return float("nan")
+    return float(arr.ravel()[0])
 
 
-def build_correlation_input(df: pd.DataFrame, user_col: str, pred_cols):
+def _zscore_series(s: pd.Series) -> pd.Series:
+    std = s.std(ddof=1)
+    if std is None or np.isnan(std) or std <= 1e-12:
+        return pd.Series(np.zeros(len(s), dtype=float), index=s.index)
+    return (s - s.mean()) / std
+
+
+def _require_columns(df: pd.DataFrame, user_col: str, pred_cols):
+    missing = [c for c in [user_col, *pred_cols] if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+
+def prepare_correlation_input(df: pd.DataFrame, user_col: str, pred_cols) -> pd.DataFrame:
     work = df[[user_col, *pred_cols]].copy()
     for col in pred_cols:
         work[col] = pd.to_numeric(work[col], errors="coerce")
@@ -104,9 +82,8 @@ def clean_for_factor_analysis(df: pd.DataFrame, user_col: str, pred_cols, missin
     for col in pred_cols:
         work[col] = pd.to_numeric(work[col], errors="coerce")
 
-    missing_report = work[pred_cols].isna().sum().sort_values(ascending=False)
-    initial_rows = len(work)
-    initial_students = work[user_col].nunique(dropna=True)
+    initial_rows = int(len(work))
+    initial_students = int(work[user_col].nunique(dropna=True))
 
     # avoid turning NaN into string "nan" IDs
     work = work.dropna(subset=[user_col]).copy()
@@ -119,97 +96,180 @@ def clean_for_factor_analysis(df: pd.DataFrame, user_col: str, pred_cols, missin
         means = work[pred_cols].mean()
         work[pred_cols] = work[pred_cols].fillna(means)
 
-    work[user_col] = work[user_col].astype(str)
     work = work.replace([np.inf, -np.inf], np.nan).dropna(subset=pred_cols + [user_col])
+    work[user_col] = work[user_col].astype(str)
 
     summary = {
-        "initial_rows": int(initial_rows),
+        "initial_rows": initial_rows,
         "rows_after_missing_handling": int(len(work)),
         "rows_dropped": int(initial_rows - len(work)),
-        "initial_students": int(initial_students),
+        "initial_students": initial_students,
         "students_after_missing_handling": int(work[user_col].nunique()),
         "missing_strategy": missing,
-        "missing_count_by_column": {k: int(v) for k, v in missing_report.items()},
     }
     return work, summary
 
 
-def _extract_random_intercept_value(re_value):
-    arr = np.asarray(re_value)
-    if arr.ndim == 0:
-        return float(arr)
-    return float(arr.ravel()[0])
-
-
-def compute_mixed_effects_correlations(df: pd.DataFrame, user_col: str, pred_cols, maxiter: int):
-    """
-    For each variable v, fit random-intercept model
-        v_ij = beta0 + u_j + e_ij
-    Compute: 
-    within correlation from residuals e
-    between correlation from random intercepts u
-    """
+def compute_mixed_effects_correlations(
+    df: pd.DataFrame,
+    user_col: str,
+    pred_cols,
+    maxiter: int,
+    boundary_threshold: float,
+):
     work = df[[user_col, *pred_cols]].copy()
-    work[user_col] = work[user_col].astype(str)
     for col in pred_cols:
         work[col] = pd.to_numeric(work[col], errors="coerce")
+    work[user_col] = work[user_col].astype(str)
 
     residuals = pd.DataFrame(index=work.index, columns=pred_cols, dtype=float)
-    students = sorted(work[user_col].dropna().unique().tolist())
-    random_intercepts = pd.DataFrame(index=students, columns=pred_cols, dtype=float)
+    users = sorted(work[user_col].dropna().unique().tolist())
+    random_intercepts = pd.DataFrame(index=users, columns=pred_cols, dtype=float)
+
+    fallback_models = set()
+    boundary_models = set()
+    diag_rows = []
 
     for col in pred_cols:
         sub = work[[user_col, col]].dropna().copy()
-        n_obs = len(sub)
-        n_students = sub[user_col].nunique()
+        n_obs = int(len(sub))
+        n_students = int(sub[user_col].nunique())
+
+        status = "fitted"
+        reason = ""
+        cov_re_var = float("nan")
+
         if n_obs < 10 or n_students < 3:
+            diag_rows.append(
+                {
+                    "model": col,
+                    "n_obs": n_obs,
+                    "n_students": n_students,
+                    "status": "skipped",
+                    "fallback_reason": "insufficient_data",
+                    "cov_re_var": cov_re_var,
+                }
+            )
             continue
 
-        exog = np.ones((n_obs, 1), dtype=float)
-        endog = sub[col].to_numpy(dtype=float)
-        groups = sub[user_col].to_numpy()
+        sub[col] = _zscore_series(sub[col].astype(float))
 
         try:
+            endog = sub[col].to_numpy(dtype=float)
+            exog = np.ones((len(sub), 1), dtype=float)
+            groups = sub[user_col].to_numpy()
+
             with warnings.catch_warnings():
-                warnings.simplefilter("ignore", ConvergenceWarning)
+                warnings.simplefilter("ignore", SMConvergenceWarning)
                 warnings.filterwarnings(
                     "ignore",
                     category=UserWarning,
-                    message="Random effects covariance is singular",
+                    message=".*covariance.*singular.*",
                 )
                 model = sm.MixedLM(endog=endog, exog=exog, groups=groups)
                 result = model.fit(reml=True, method="lbfgs", maxiter=maxiter, disp=False)
-            residuals.loc[sub.index, col] = result.resid
-            for g, re_value in result.random_effects.items():
-                random_intercepts.loc[str(g), col] = _extract_random_intercept_value(re_value)
-        except Exception as exc:
-            print(f"[warning] MixedLM failed for {col}: {exc}")
+
+            cov_re_var = _to_scalar(result.cov_re)
+
+            if (not np.isfinite(cov_re_var)) or (cov_re_var < boundary_threshold):
+                status = "fallback"
+                reason = "boundary_cov_re"
+                fallback_models.add(col)
+                boundary_models.add(col)
+
+                centered = sub[col] - sub.groupby(user_col)[col].transform("mean")
+                residuals.loc[sub.index, col] = centered.to_numpy()
+                re_proxy = sub.groupby(user_col)[col].mean() - sub[col].mean()
+                random_intercepts.loc[re_proxy.index.astype(str), col] = re_proxy.to_numpy()
+            else:
+                residuals.loc[sub.index, col] = result.resid
+
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", UserWarning)
+                        warnings.filterwarnings(
+                            "ignore",
+                            category=UserWarning,
+                            message=".*covariance.*singular.*",
+                        )
+                        re_map = result.random_effects
+                    for uid, re_val in re_map.items():
+                        random_intercepts.loc[str(uid), col] = _to_scalar(re_val)
+                except Exception:
+                    status = "fallback"
+                    reason = "random_effects_exception"
+                    fallback_models.add(col)
+                    re_proxy = sub.groupby(user_col)[col].mean() - sub[col].mean()
+                    random_intercepts.loc[re_proxy.index.astype(str), col] = re_proxy.to_numpy()
+
+        except Exception:
+            status = "fallback"
+            reason = "fit_exception"
+            fallback_models.add(col)
+
+            centered = sub[col] - sub.groupby(user_col)[col].transform("mean")
+            residuals.loc[sub.index, col] = centered.to_numpy()
+            re_proxy = sub.groupby(user_col)[col].mean() - sub[col].mean()
+            random_intercepts.loc[re_proxy.index.astype(str), col] = re_proxy.to_numpy()
+
+        diag_rows.append(
+            {
+                "model": col,
+                "n_obs": n_obs,
+                "n_students": n_students,
+                "status": status,
+                "fallback_reason": reason,
+                "cov_re_var": cov_re_var,
+            }
+        )
 
     within_corr = residuals.astype(float).corr()
     between_corr = random_intercepts.astype(float).corr()
-    return within_corr, between_corr
+
+    mixed_diag = {
+        "fallback_models": sorted(fallback_models),
+        "boundary_models": sorted(boundary_models),
+        "boundary_threshold": float(boundary_threshold),
+        "details": pd.DataFrame(diag_rows).sort_values("model").reset_index(drop=True),
+    }
+    return within_corr, between_corr, mixed_diag
 
 
 def compute_level_data(df: pd.DataFrame, user_col: str, pred_cols):
-    # Decomposition + separate FA (not jointly estimated full multilevel FA)
-    group_means = df.groupby(user_col)[pred_cols].mean()
     within = df[pred_cols] - df.groupby(user_col)[pred_cols].transform("mean")
-    between = group_means.copy()
+    between = df.groupby(user_col)[pred_cols].mean()
     return within, between
 
 
-#ICC = between-student variance / (between-student variance + within-student variance)
-#how much of the total variance is due to differences between students
-def estimate_icc(df: pd.DataFrame, user_col: str, pred_cols):
-    group_means = df.groupby(user_col)[pred_cols].mean()
+def estimate_icc(df: pd.DataFrame, user_col: str, pred_cols) -> pd.Series:
+    means = df.groupby(user_col)[pred_cols].mean()
     centered = df[pred_cols] - df.groupby(user_col)[pred_cols].transform("mean")
-    between_var = group_means.var(ddof=1)
+    between_var = means.var(ddof=1)
     within_var = centered.var(ddof=1)
-    icc = between_var / (between_var + within_var)
-    return icc
+    return between_var / (between_var + within_var)
 
 
-def _factor_param_count(n_features: int, n_factors: int):
+def varimax(loadings: np.ndarray, gamma: float = 1.0, q: int = 50, tol: float = 1e-6):
+    if loadings.shape[1] < 2:
+        return loadings
+
+    p, k = loadings.shape
+    rot = np.eye(k)
+    d_old = 0.0
+    for _ in range(q):
+        lam = loadings @ rot
+        u, s, vh = np.linalg.svd(
+            loadings.T @ (lam**3 - (gamma / p) * lam @ np.diag(np.diag(lam.T @ lam)))
+        )
+        rot = u @ vh
+        d = np.sum(s)
+        if d_old != 0.0 and d / d_old < 1.0 + tol:
+            break
+        d_old = d
+    return loadings @ rot
+
+
+def _factor_param_count(n_features: int, n_factors: int) -> int:
     return int(
         n_features * n_factors
         + n_features
@@ -217,91 +277,139 @@ def _factor_param_count(n_features: int, n_factors: int):
     )
 
 
-def fit_factor_model(X: pd.DataFrame, n_factors: int, random_state: int):
+def fit_factor_model(X: pd.DataFrame, n_factors: int, random_state: int, fa_maxiter: int):
     if X.shape[0] < 3:
-        raise ValueError(
-            f"Need at least 3 rows for factor analysis, got {X.shape[0]} rows."
-        )
+        raise ValueError(f"Need at least 3 rows, got {X.shape[0]}")
+
     std = X.std(ddof=1)
     near_zero = std[std < 1e-10].index.tolist()
     if near_zero:
-        raise ValueError(
-            f"Columns with near-zero variance cannot be factor analyzed: {near_zero}"
-        )
+        raise ValueError(f"Near-zero variance columns: {near_zero}")
 
     Xz = StandardScaler().fit_transform(X.values)
-    model = FactorAnalysis(n_components=n_factors, random_state=random_state)
-    model.fit(Xz)
+    model = FactorAnalysis(n_components=n_factors, random_state=random_state, max_iter=fa_maxiter)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SKConvergenceWarning)
+        model.fit(Xz)
 
     avg_loglike = float(model.score(Xz))
     n_samples, n_features = Xz.shape
     total_loglike = avg_loglike * n_samples
     n_params = _factor_param_count(n_features=n_features, n_factors=n_factors)
-    aic = 2 * n_params - 2 * total_loglike
-    bic = np.log(n_samples) * n_params - 2 * total_loglike
-
-    loadings = pd.DataFrame(
-        model.components_.T,
-        index=X.columns,
-        columns=[f"Factor{i + 1}" for i in range(n_factors)],
-    )
-    communalities = (loadings**2).sum(axis=1).rename("communality")
-    uniqueness = pd.Series(model.noise_variance_, index=X.columns, name="uniqueness")
-    loading_table = pd.concat([loadings, communalities, uniqueness], axis=1)
 
     fit_stats = {
         "n_samples": int(n_samples),
         "n_features": int(n_features),
         "n_factors": int(n_factors),
-        "avg_loglike": float(avg_loglike),
+        "avg_loglike": avg_loglike,
         "total_loglike": float(total_loglike),
         "n_parameters": int(n_params),
-        "AIC": float(aic),
-        "BIC": float(bic),
+        "AIC": float(2 * n_params - 2 * total_loglike),
+        "BIC": float(np.log(n_samples) * n_params - 2 * total_loglike),
+        "fa_converged": bool(getattr(model, "n_iter_", fa_maxiter) < fa_maxiter),
     }
-    return fit_stats, loading_table
+
+    unrot = pd.DataFrame(
+        model.components_.T,
+        index=X.columns,
+        columns=[f"Factor{i + 1}" for i in range(n_factors)],
+    )
+    rot = pd.DataFrame(
+        varimax(model.components_.T),
+        index=X.columns,
+        columns=[f"Factor{i + 1}" for i in range(n_factors)],
+    )
+    rot["communality"] = (rot[[c for c in rot.columns if c.startswith("Factor")]] ** 2).sum(axis=1)
+    rot["uniqueness"] = model.noise_variance_
+
+    return fit_stats, unrot, rot
 
 
-def run_factor_comparison(within: pd.DataFrame, between: pd.DataFrame, random_state: int):
+def _scree_and_kaiser(X: pd.DataFrame):
+    Xz = StandardScaler().fit_transform(X.values)
+    cov = np.cov(Xz, rowvar=False)
+    eigvals = np.sort(np.linalg.eigvalsh(cov))[::-1]
+    return eigvals, int(np.sum(eigvals > 1.0))
+
+
+def run_factor_comparison(
+    within: pd.DataFrame,
+    between: pd.DataFrame,
+    max_factors: int,
+    random_state: int,
+    fa_maxiter: int,
+):
     rows = []
-    loading_tables = {}
+    unrot_tables = {}
+    rot_tables = {}
+
     for level_name, X in [("within", within), ("between", between)]:
-        for n_factors in [1, 2]:
-            fit_stats, loading_table = fit_factor_model(
-                X=X, n_factors=n_factors, random_state=random_state
-            )
+        eigvals, kaiser_n = _scree_and_kaiser(X)
+        scree_text = "|".join(f"{v:.6f}" for v in eigvals)
+
+        for n_factors in range(1, min(max_factors, X.shape[1]) + 1):
+            fit_stats, unrot, rot = fit_factor_model(X, n_factors, random_state, fa_maxiter)
             fit_stats["level"] = level_name
+            fit_stats["kaiser_n"] = int(kaiser_n)
+            fit_stats["scree_eigenvalues"] = scree_text
             rows.append(fit_stats)
-            loading_tables[(level_name, n_factors)] = loading_table
+            unrot_tables[(level_name, n_factors)] = unrot
+            rot_tables[(level_name, n_factors)] = rot
+
     comparison = pd.DataFrame(rows).sort_values(["level", "n_factors"]).reset_index(drop=True)
-    return comparison, loading_tables
+    return comparison, unrot_tables, rot_tables
 
 
-def write_core_outputs(
+def outputs(
     output_dir: Path,
     within_corr: pd.DataFrame,
     between_corr: pd.DataFrame,
     comparison: pd.DataFrame,
-    loading_tables,
+    unrot_tables,
+    rot_tables,
     icc: pd.Series,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for old_file in output_dir.iterdir():
-        if old_file.is_file() and old_file.name not in CORE_OUTPUT_FILES:
-            old_file.unlink()
+    for p in output_dir.iterdir():
+        if p.is_dir():
+            shutil.rmtree(p)
+        elif p.is_file() and p.name not in CORE_OUTPUT_FILES:
+            p.unlink()
 
     within_corr.to_csv(output_dir / "within_correlation_matrix.csv")
     between_corr.to_csv(output_dir / "between_correlation_matrix.csv")
     comparison.to_csv(output_dir / "factor_model_comparison.csv", index=False)
-    loading_tables[("within", 1)].to_csv(output_dir / "within_factor_loadings1.csv")
-    loading_tables[("within", 2)].to_csv(output_dir / "within_factor_loadings2.csv")
-    loading_tables[("between", 1)].to_csv(output_dir / "between_factor_loadings1.csv")
-    loading_tables[("between", 2)].to_csv(output_dir / "between_factor_loadings2.csv")
+
+    if ("within", 2) in rot_tables:
+        rot_tables[("within", 2)].to_csv(output_dir / "within_factor_loadings2.csv")
+    else:
+        rot_tables[("within", 1)].to_csv(output_dir / "within_factor_loadings2.csv")
+
+    if ("between", 2) in rot_tables:
+        rot_tables[("between", 2)].to_csv(output_dir / "between_factor_loadings2.csv")
+    else:
+        rot_tables[("between", 1)].to_csv(output_dir / "between_factor_loadings2.csv")
+
     icc.rename("ICC").to_csv(output_dir / "icc_by_measure.csv", header=True)
 
+    # supplemental tables for factor 3 and 4
+    supplement_dir = output_dir / "supplement_factor_loadings"
+    supplement_dir.mkdir(parents=True, exist_ok=True)
+    for p in supplement_dir.iterdir():
+        if p.is_file():
+            p.unlink()
 
-def print_summary(summary: dict, comparison: pd.DataFrame, output_dir: Path):
+    for level_name in ("within", "between"):
+        for n_factors in (3, 4):
+            key = (level_name, n_factors)
+            if key in rot_tables:
+                rot_tables[key].to_csv(
+                    supplement_dir / f"{level_name}_factor_loadings{n_factors}_varimax.csv"
+                )
+
+
+def print_summary(summary: dict, comparison: pd.DataFrame, mixed_diag: dict, icc: pd.Series, output_dir: Path):
     print("Data Summary")
     print(f"Initial rows: {summary['initial_rows']}")
     print(f"Rows after missing handling: {summary['rows_after_missing_handling']}")
@@ -310,12 +418,21 @@ def print_summary(summary: dict, comparison: pd.DataFrame, output_dir: Path):
     print(f"Students after missing handling: {summary['students_after_missing_handling']}")
     print(f"Missing strategy: {summary['missing_strategy']}")
 
-    print("\nFactor Model Comparison")
+    fallback_models = mixed_diag["fallback_models"]
+    boundary_models = mixed_diag["boundary_models"]
+    print(f"Mixed effects fallback used for {len(fallback_models)} variable")
+    print(f"Fallback variables: {fallback_models}")
     print(
-        comparison[
-            ["level", "n_factors", "n_samples", "avg_loglike", "AIC", "BIC"]
-        ].to_string(index=False)
+        "Boundary (near-singular cov_re) variables: "
+        f"{boundary_models} (threshold={mixed_diag['boundary_threshold']})"
     )
+
+    low_icc = icc[icc < 0.01].index.tolist()
+    if low_icc:
+        print(f"low ICC (<0.01) variables: {low_icc}")
+
+    print("\nFactor Model Comparison")
+    print(comparison[["level", "n_factors", "AIC", "BIC", "kaiser_n"]].to_string(index=False))
     print(f"\nSaved core outputs to: {output_dir}")
 
 
@@ -328,50 +445,35 @@ def main():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
     df = pd.read_csv(input_path)
-    assert_columns_exist(df=df, user_col=args.user_col, pred_cols=args.pred_cols)
+    _require_columns(df, args.user_col, args.pred_cols)
 
-    # Mixed-effects correlation uses all available rows per variable
-    corr_input = build_correlation_input(df=df, user_col=args.user_col, pred_cols=args.pred_cols)
-    within_corr, between_corr = compute_mixed_effects_correlations(
-        df=corr_input,
-        user_col=args.user_col,
-        pred_cols=args.pred_cols,
-        maxiter=args.mixed_maxiter,
+    corr_input = prepare_correlation_input(df, args.user_col, args.pred_cols)
+    within_corr, between_corr, mixed_diag = compute_mixed_effects_correlations(
+        corr_input,
+        args.user_col,
+        args.pred_cols,
+        args.mixed_maxiter,
+        args.mixed_boundary_threshold,
     )
 
-    # Factor analysis uses one aligned table according to selected missing strategy
-    cleaned, summary = clean_for_factor_analysis(
-        df=df,
-        user_col=args.user_col,
-        pred_cols=args.pred_cols,
-        missing=args.missing,
-    )
+    cleaned, summary = clean_for_factor_analysis(df, args.user_col, args.pred_cols, args.missing)
     if cleaned.empty:
-        raise ValueError("No rows remain after missing-value handling.")
+        raise ValueError("No rows remain after missing value handling")
     if cleaned[args.user_col].nunique() < 3:
-        raise ValueError("Need at least 3 students for analysis.")
+        raise ValueError("Need at least 3 students for analysis")
 
-    within_level, between_level = compute_level_data(
-        df=cleaned,
-        user_col=args.user_col,
-        pred_cols=args.pred_cols,
+    within_level, between_level = compute_level_data(cleaned, args.user_col, args.pred_cols)
+    comparison, unrot_tables, rot_tables = run_factor_comparison(
+        within_level,
+        between_level,
+        args.max_factors,
+        args.random_state,
+        args.fa_maxiter,
     )
-    comparison, loading_tables = run_factor_comparison(
-        within=within_level,
-        between=between_level,
-        random_state=args.random_state,
-    )
-    icc = estimate_icc(df=cleaned, user_col=args.user_col, pred_cols=args.pred_cols)
+    icc = estimate_icc(cleaned, args.user_col, args.pred_cols)
 
-    write_core_outputs(
-        output_dir=output_dir,
-        within_corr=within_corr,
-        between_corr=between_corr,
-        comparison=comparison,
-        loading_tables=loading_tables,
-        icc=icc,
-    )
-    print_summary(summary=summary, comparison=comparison, output_dir=output_dir)
+    outputs(output_dir, within_corr, between_corr, comparison, unrot_tables, rot_tables, icc)
+    print_summary(summary, comparison, mixed_diag, icc, output_dir)
 
 
 if __name__ == "__main__":
