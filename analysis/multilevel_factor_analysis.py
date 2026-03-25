@@ -35,7 +35,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="KT multilevel decomposition + factor analysis + mixed model diagnostic"
     )
-    parser.add_argument("--input", default="output/combined_output.csv")
+    parser.add_argument("--input", default="../output/combined_output.csv")
     parser.add_argument("--output-dir", default="output/factor_analysis")
     parser.add_argument("--user-col", default="user")
     parser.add_argument("--pred-cols", nargs="+", default=DEFAULT_PREDICTION_COLUMNS)
