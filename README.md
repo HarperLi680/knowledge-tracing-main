@@ -98,7 +98,9 @@ This will install the pure Python version from PyPI, which is simpler but much s
 
 --- 
 **Option 3:**
-Using Ryan's Brute Force BKT located at `Models/bkt_bf.py`.
+Using Baker et al.'s (2008) Brute Force BKT located at `Models/bkt_bf.py`.
+
+Baker, R.S.J.d., Corbett, A.T., Aleven, V. (2008) More Accurate Student Modeling Through Contextual Estimation of Slip and Guess Probabilities in Bayesian Knowledge Tracing. Proceedings of the 9th International Conference on Intelligent Tutoring Systems, 406-415.
 
 ## Data cleaning
 The data preprocess pipeline has an entry script in `preprocess/preprocess.py`, where it preprocesses the raw Assessment09 data from `data/raw/skill_builder_data_corrected_collapsed.csv`. The cleaned data are train and test, split in `data/processed`. The train data are further processed for tabular and sequential models under `data/processed/train/tabular` and `data/processed/train/sequential`, respectively.
