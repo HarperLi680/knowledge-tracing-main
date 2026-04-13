@@ -197,16 +197,9 @@ def main():
     save_id2idx(dkeyid2idx, os.path.join(args.output_dir, "keyid2idx.json"))
     
     print("\n" + "="*50)
-    print("STEP 5: Train/Test Split")
-    print("="*50)
-    train_df, test_df = train_test_split(total_df, 0.2)
-    print(f"Train sequences: {len(train_df)}")
-    print(f"Test sequences: {len(test_df)}")
-    
-    print("\n" + "="*50)
     print("STEP 6: K-Fold split on training data")
     print("="*50)
-    train_df = KFold_split(train_df, args.kfold)
+    train_df = KFold_split(total_df, args.kfold)
     train_df['fold'] = train_df['fold'].astype(int)
     
     print("\n" + "="*50)
@@ -216,11 +209,6 @@ def main():
     effective_keys.add('fold')
     train_sequences = generate_sequences(train_df, effective_keys, args.min_seq_len, args.maxlen)
     print(f"Train sequences after padding: {len(train_sequences)}")
-    
-    # Generate test sequences (without fold)
-    test_effective_keys = effective_keys - {'fold'}
-    test_sequences = generate_sequences(test_df, test_effective_keys, args.min_seq_len, args.maxlen)
-    print(f"Test sequences after padding: {len(test_sequences)}")
     
     print("\n" + "="*50)
     print("STEP 8: Creating training fold files")
@@ -244,26 +232,7 @@ def main():
         sequential_file = os.path.join(train_sequential_dir, f"converted_fold_{fold}.csv")
         convert_to_sequential_format(train_sequences, sequential_file, fold_id=fold)
         print(f"  ✓ Sequential: saved")
-    
-    print("\n" + "="*50)
-    print("STEP 9: Creating test set files")
-    print("="*50)
-    
-    test_tabular_dir = os.path.join(args.output_dir, "test", "tabular")
-    test_sequential_dir = os.path.join(args.output_dir, "test", "sequential")
-    os.makedirs(test_tabular_dir, exist_ok=True)
-    os.makedirs(test_sequential_dir, exist_ok=True)
-    
-    # Test tabular format
-    test_tabular_df = convert_to_tabular_with_features(test_sequences)
-    test_tabular_file = os.path.join(test_tabular_dir, "test.csv")
-    test_tabular_df.to_csv(test_tabular_file, index=False)
-    print(f"✓ Test tabular: {len(test_tabular_df)} interactions")
-    
-    # Test sequential format
-    test_sequential_file = os.path.join(test_sequential_dir, "test.csv")
-    convert_to_sequential_format(test_sequences, test_sequential_file)
-    print(f"✓ Test sequential: saved")
+
     
     print("\n" + "="*50)
     print("Preprocessing complete!")

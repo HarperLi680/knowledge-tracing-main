@@ -2,33 +2,7 @@ import copy
 import pandas as pd
 
 
-def train_test_split(df, test_ratio=0.2, random_state=1024):
-    """
-    Splits the dataframe into train and test sets.
-    
-    Args:
-        df: Input dataframe
-        test_ratio: Ratio of test data (default: 0.2)
-        random_state: Random seed for reproducibility
-        
-    Returns:
-        Tuple of (train_df, test_df)
-    """
-    # Shuffle the dataframe
-    df = df.sample(frac=1.0, random_state=random_state).reset_index(drop=True)
-    
-    # Calculate split point
-    test_num = int(len(df) * test_ratio)
-    
-    # Split
-    test_df = df[:test_num]
-    train_df = df[test_num:]
-    
-    print(f"Total: {len(df)}, Train: {len(train_df)}, Test: {len(test_df)}")
-    return train_df, test_df
-
-
-def KFold_split(df, k=5, random_state=1024):
+def KFold_split(df, k=6, random_state=1024):
     """
     Assigns a fold ID to each row in the dataframe for K-fold cross-validation.
     
