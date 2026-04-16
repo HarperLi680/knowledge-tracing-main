@@ -75,14 +75,14 @@ def train_and_predict_deep_learning(data_folder, train_folds, test_fold, model_n
             'lr': 0.001,
             'gamma': 0.5,
             'lr_decay': 50,
-            'hidden_emb_dim': 64,
-            'skill_emb_dim': 128,
-            'answer_emb_dim': 64,
+            'hidden_emb_dim': 80,
+            'skill_emb_dim': 256,
+            'answer_emb_dim': 96,
             'beta': 0.2,
             'epsilon': 10,
             'seqlen': 100,
             'max_iter': 1,
-            'batch_size': 32,
+            'batch_size': 24,
             'n_skill': n_skill
         }
         
@@ -127,11 +127,11 @@ def train_and_predict_deep_learning(data_folder, train_folds, test_fold, model_n
 
         dkt_params = {
             'n_skill': n_skill,
-            'hidden_dim': 100,
+            'hidden_dim': 200,
             'num_layers': 1,
-            'dropout': 0.2,
+            'dropout': 0.5,
             'lr': 1e-3,
-            'batch_size': 32,
+            'batch_size': 100,
             'epochs': 40
         }
 
