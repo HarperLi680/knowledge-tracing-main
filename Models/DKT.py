@@ -31,7 +31,7 @@ class DKT(nn.Module):
     - training uses BCEWithLogitsLoss
     """
 
-    def __init__(self, n_skill, hidden_dim=100, num_layers=1, dropout=0.2):
+    def __init__(self, n_skill, hidden_dim=200, num_layers=1, dropout=0.5):
         super().__init__()
         self.n_skill = n_skill
         self.input_size = 2 * n_skill + 1   # 0 reserved for padding
@@ -218,8 +218,8 @@ def _evaluate_dkt(model, data, batch_size):
 
 
 def train_DKT(train_path, valid_path, n_skill,
-              hidden_dim=100, num_layers=1, dropout=0.2,
-              lr=1e-3, batch_size=32, epochs=30):
+              hidden_dim=200, num_layers=1, dropout=0.5,
+              lr=1e-3, batch_size=100, epochs=40):
     train_data = _read_dkt_sequences(train_path, n_skill)
     valid_data = _read_dkt_sequences(valid_path, n_skill)
 
@@ -287,8 +287,8 @@ def train_DKT(train_path, valid_path, n_skill,
 
 
 def train_predict_DKT(train_path, valid_path, test_path,
-                      n_skill, hidden_dim=100, num_layers=1,
-                      dropout=0.2, lr=1e-3, batch_size=32, epochs=30):
+                      n_skill, hidden_dim=200, num_layers=1,
+                      dropout=0.5, lr=1e-3, batch_size=100, epochs=40):
     """
     Trains DKT and returns:
         preds: list of probabilities for next-step correctness

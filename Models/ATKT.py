@@ -198,7 +198,7 @@ def train_predict_ATKT(train_data, valid_path:str, test_path:str,lr:float, gamma
                    
 if __name__ =="__main__":
     parser = argparse.ArgumentParser(description='Script to train KT')
-    parser.add_argument('--max_iter', type=int, default=100, help='number of iterations')
+    parser.add_argument('--max_iter', type=int, default=150, help='number of iterations')
     parser.add_argument('--seed', type=int, default=224, help='default seed')
     parser.add_argument('--lr', type=float, default=0.001, help='Initial learning rate.')
     parser.add_argument('--gamma', type=float, default=0.5, help='LR decay factor.')
@@ -206,7 +206,7 @@ if __name__ =="__main__":
     parser.add_argument('--hidden-emb-dim', type=int, default=80, help='Dimension of concept embedding.')
     parser.add_argument('--skill-emb-dim', type=int, default=256)
     parser.add_argument('--answer-emb-dim', type=int, default=96)
-    parser.add_argument('--batch_size', type=int, default=110)
+    parser.add_argument('--batch_size', type=int, default=24)
     parser.add_argument('--n_skill', type=int, default=110)
     parser.add_argument('--seq_len', type=int, default=200)
     parser.add_argument('--train_path', type=str, default="dataset/assist2009_ATKT/assist2009_ATKT_train1.csv")
