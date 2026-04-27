@@ -143,7 +143,16 @@ def train_predict_BKT(train_data, test_data):
     ):
         print("pyBKT predictions collapsed; falling back to history/skill priors.")
         if history_pred is not None:
-            merged['correct_predictions'] = history_pred
+            n_history = (
+                df_test['b4_correct'].astype(float) +
+                df_test['b4_incorrect'].astype(float)
+            )
+        
+            merged['correct_predictions'] = np.where(
+                n_history > 0,
+                history_pred,
+                prior_pred
+            )
         else:
             merged['correct_predictions'] = prior_pred
     else:
