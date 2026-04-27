@@ -345,8 +345,10 @@ cat("Maximum attempt number found:", max_attempt, "\n")
 
 results <- list()
 
-# Starts at 2 as KT models need the 1st attempt per skill
-for (k in 2:min(max_attempt, 20)) {
+dat_raw <- dat_raw %>%
+  tidyr::drop_na()
+
+for (k in 1:min(max_attempt, 20)) {
   dat_k <- dat_raw %>%
     filter(attempt_in_skill == k)
   
@@ -472,7 +474,7 @@ ggsave(
 # 8A. Settings for visualization
 # ---------------------------------------------------------
 
-attempts <- 2:min(max_attempt, 20)
+attempts <- 1:min(max_attempt, 20)
 base_dir <- "efa_by_attempt"
 
 # choose one of: "overall", "between", "within"
