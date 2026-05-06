@@ -82,16 +82,29 @@ def train_predict_Elo(train_files, test_file, k: float = 1.0):
     abilities, difficulties = train_Elo(train_files, k=k)
     df_test = pd.read_csv(test_file)
 
-    # Vanilla logistic probability (NOT base-10 Elo)
-    def win_prob(u, i):
-        r_u = abilities.get(u, DEFAULT_RATING)
-        r_i = difficulties.get(i, DEFAULT_RATING)
-        return 1.0 / (1.0 + np.exp(-(r_u - r_i)))
+    predictions = []
+    actuals = []
 
-    rows = df_test[['user', 'item']].to_numpy()
-    probs = np.array([win_prob(int(u), int(i)) for u, i in rows], dtype=float)
+    for u, i, correct in df_test[['user', 'item', 'correct']].to_numpy():
+        u = int(u)
+        i = int(i)
+        y = float(correct)
 
-    return probs, df_test['correct'].to_numpy()
+        # Current ratings before seeing this test answer
+        q_s = abilities.get(u, DEFAULT_RATING)
+        d_i = difficulties.get(i, DEFAULT_RATING)
+
+        # Predict first
+        p = Elo._sigmoid(q_s - d_i)
+
+        predictions.append(p)
+        actuals.append(y)
+
+        # Then update ONLY student ability.
+        # Item difficulty remains fixed during test.
+        abilities[u] = q_s + k * (y - p)
+
+    return np.array(predictions, dtype=float), np.array(actuals, dtype=float)
 
 
 if __name__ == "__main__":
