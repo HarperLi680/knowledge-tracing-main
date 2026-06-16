@@ -14,6 +14,7 @@ from Models.Elo import train_predict_Elo
 from Models.ATKT import train_predict_ATKT
 from Models.DSAKT import train_predict_DSAKT
 from Models.DKT import train_predict_DKT
+from Models.LKT import train_predict_LKT
 
 def calculate_n_skill(data_files):
     all_skills = set()
@@ -153,6 +154,7 @@ def get_original_data_predictions(traditional_data_folder, dl_data_folder):
     num_folds_trad = len(traditional_files)
     
     all_predictions = {
+        'LKT': {},
         'bkt_bf': {},
         'BKT_forgetting': {},
         'PFA': {},
@@ -164,6 +166,7 @@ def get_original_data_predictions(traditional_data_folder, dl_data_folder):
     }
     
     traditional_models = {
+        'LKT': train_predict_LKT,
         'bkt_bf': train_predict_BKT_bf,
         'BKT_forgetting': train_predict_BKT_Forgetting,
         'PFA': train_predict_PFA,
