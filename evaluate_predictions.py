@@ -7,6 +7,7 @@ import json
 
 
 EXPECTED_MODELS = [
+    'LKT',
     'bkt_bf',
     'BKT_forgetting',
     'PFA',
@@ -19,7 +20,7 @@ EXPECTED_MODELS = [
 
 MODEL_ALIASES = {
     'BKT': 'bkt_bf',
-    'Elo': 'ELO'
+    'Elo': 'ELO',
 }
 
 
