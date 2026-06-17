@@ -19,7 +19,7 @@ from cleaning import (
     get_max_concepts,
     extend_multi_concepts
 )
-from splitting import train_test_split, KFold_split
+from splitting import KFold_split
 
 
 def read_and_format_raw_data(input_csv, min_seq_len=3):
