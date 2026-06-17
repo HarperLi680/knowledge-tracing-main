@@ -147,7 +147,7 @@ def main():
     parser.add_argument('--dataset_name', type=str, default='assistments09',
                        help='Name of the dataset')
     parser.add_argument('--raw_csv', type=str, 
-                       default='data/raw/skill_builder_data_corrected_collapsed.csv',
+                       default='../data/raw/skill_builder_data_corrected_collapsed.csv',
                        help='Path to raw CSV file')
     parser.add_argument('--output_dir', type=str,
                        default='data/processed',
