@@ -3,7 +3,9 @@
 Created on Mon Jun 15 08:46:58 2026
 
 @author: azamb
+
 """
+
 import os
 from dataclasses import dataclass
 from collections import defaultdict
@@ -16,10 +18,86 @@ from sklearn.metrics import roc_auc_score, mean_squared_error
 from sklearn.linear_model import LogisticRegressionCV
 
 
+# ============================================================
+# Basic utilities
+# ============================================================
+
 def _sigmoid(z):
     z = np.clip(z, -35, 35)
     return 1.0 / (1.0 + np.exp(-z))
 
+
+def _required_lkt_feature_cols(decay_values=(0.1, 0.5, 0.8)):
+    required = [
+        "user_id",
+        "skill_id",
+        "item",
+        "correct",
+        "row_id",
+
+        "b4_correct",
+        "b4_incorrect",
+
+        "problem_b4_correct",
+        "problem_b4_incorrect",
+
+        "kc_trial_gap",
+        "kc_log_trial_gap",
+        "kc_recency",
+
+        "problem_trial_gap",
+        "problem_log_trial_gap",
+        "problem_recency",
+    ]
+
+    for decay in decay_values:
+        required.extend([
+            f"kc_decayed_success_{decay}",
+            f"kc_decayed_failure_{decay}",
+            f"problem_decayed_success_{decay}",
+            f"problem_decayed_failure_{decay}",
+        ])
+
+    return required
+
+
+def _has_precomputed_lkt_features(df, decay_values=(0.1, 0.5, 0.8)):
+    required = _required_lkt_feature_cols(decay_values)
+    return all(col in df.columns for col in required)
+
+
+def _default_lkt_cache_path(path):
+    """
+    Given an original tabular fold file path, create a safe cached LKT path.
+
+    Example:
+        data/processed/train/tabular/converted_fold_0.csv
+
+    becomes:
+        data/processed/train/tabular_lkt_auto/converted_fold_0_lkt.csv
+
+    This avoids saving cached files inside the original tabular folder,
+    because your experiment script lists all .csv files in that folder.
+    """
+
+    path = os.path.normpath(path)
+    folder = os.path.dirname(path)
+    filename = os.path.basename(path)
+
+    name, ext = os.path.splitext(filename)
+
+    parent = os.path.dirname(folder)
+    folder_name = os.path.basename(folder)
+
+    cache_folder = os.path.join(parent, f"{folder_name}_lkt_auto")
+    cache_filename = f"{name}_lkt.csv"
+
+    return os.path.join(cache_folder, cache_filename)
+
+
+# ============================================================
+# Feature standardization / precomputation
+# ============================================================
 
 def _standardize_columns(
     df: pd.DataFrame,
@@ -266,23 +344,178 @@ def _add_decayed_counts(
     return df
 
 
-def _load_and_prepare_file(path, decay_values):
+# ============================================================
+# Optional manual precompute helpers
+# ============================================================
+
+def precompute_lkt_features_for_file(
+    input_csv,
+    output_csv=None,
+    decay_values=(0.1, 0.5, 0.8),
+):
+    """
+    Manually precompute expensive LKT history/spacing/decay features
+    for one fold file.
+
+    If output_csv is None, it uses the automatic cache path.
+    """
+
+    if not os.path.exists(input_csv):
+        raise FileNotFoundError(f"Input file not found: {input_csv}")
+
+    if output_csv is None:
+        output_csv = _default_lkt_cache_path(input_csv)
+
+    raw = pd.read_csv(input_csv)
+
+    if _has_precomputed_lkt_features(raw, decay_values):
+        featured = raw.copy()
+        print(f"Already precomputed: {input_csv}")
+    else:
+        print(f"Precomputing LKT features for: {input_csv}")
+        featured = _standardize_columns(
+            raw,
+            decay_values=decay_values,
+        )
+
+    output_dir = os.path.dirname(output_csv)
+
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    featured.to_csv(output_csv, index=False)
+
+    print(f"Saved precomputed LKT file: {output_csv}")
+    print(f"Shape: {featured.shape}")
+
+    return featured
+
+
+def precompute_lkt_features_for_folds(
+    input_dir,
+    output_dir=None,
+    kfold=5,
+    input_pattern="converted_fold_{fold}.csv",
+    output_pattern="converted_fold_{fold}_lkt.csv",
+    decay_values=(0.1, 0.5, 0.8),
+):
+    """
+    Manually precompute LKT features once for all fold files.
+
+    If output_dir is None, it creates a sibling folder:
+        tabular_lkt_auto
+    """
+
+    if output_dir is None:
+        input_dir_norm = os.path.normpath(input_dir)
+        parent = os.path.dirname(input_dir_norm)
+        folder_name = os.path.basename(input_dir_norm)
+        output_dir = os.path.join(parent, f"{folder_name}_lkt_auto")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    output_paths = []
+
+    for fold in range(kfold):
+        input_csv = os.path.join(
+            input_dir,
+            input_pattern.format(fold=fold),
+        )
+
+        output_csv = os.path.join(
+            output_dir,
+            output_pattern.format(fold=fold),
+        )
+
+        print("\n" + "=" * 60)
+        print(f"Precomputing fold {fold}")
+        print("=" * 60)
+
+        precompute_lkt_features_for_file(
+            input_csv=input_csv,
+            output_csv=output_csv,
+            decay_values=decay_values,
+        )
+
+        output_paths.append(output_csv)
+
+    return output_paths
+
+
+def _load_and_prepare_file(
+    path,
+    decay_values,
+    use_precomputed=True,
+    auto_cache=True,
+):
+    """
+    Load one CSV.
+
+    Behavior:
+        1. If the input file already has LKT features, use it directly.
+        2. Else, check for an automatically cached LKT version.
+        3. If cached version exists, load it.
+        4. Else, compute LKT features, save cache, and return it.
+
+    This lets the main experiment script stay unchanged.
+    """
+
     if not os.path.exists(path):
         raise FileNotFoundError(f"Data file not found: {path}")
 
+    # First, check whether the given file itself is already precomputed.
     raw = pd.read_csv(path)
 
-    return _standardize_columns(
+    if use_precomputed and _has_precomputed_lkt_features(raw, decay_values):
+        print(f"Using precomputed LKT features directly: {path}")
+        return raw
+
+    # Second, check whether an automatic cached version exists.
+    if auto_cache:
+        cache_path = _default_lkt_cache_path(path)
+
+        if os.path.exists(cache_path):
+            cached = pd.read_csv(cache_path)
+
+            if _has_precomputed_lkt_features(cached, decay_values):
+                print(f"Using cached LKT features: {cache_path}")
+                return cached
+
+            print(f"Cache exists but is invalid/incomplete, recomputing: {cache_path}")
+
+    # Third, compute features from scratch.
+    print(f"Calculating LKT features from scratch: {path}")
+
+    featured = _standardize_columns(
         raw,
         decay_values=decay_values,
     )
 
+    # Save automatic cache.
+    if auto_cache:
+        cache_path = _default_lkt_cache_path(path)
+        cache_dir = os.path.dirname(cache_path)
 
-def _combine_train_files(train_data, decay_values):
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+
+        featured.to_csv(cache_path, index=False)
+        print(f"Saved cached LKT features: {cache_path}")
+
+    return featured
+
+
+def _combine_train_files(
+    train_data,
+    decay_values,
+    use_precomputed=True,
+    auto_cache=True,
+):
     """
-    Load and prepare each training fold separately before concatenating.
+    Load and combine training files.
 
-    This avoids sequence/decay features accidentally carrying state across folds.
+    With auto_cache=True:
+        each original fold file is computed once, saved, and reused later.
     """
 
     if isinstance(train_data, (str, os.PathLike)):
@@ -291,18 +524,23 @@ def _combine_train_files(train_data, decay_values):
     frames = []
 
     for path in train_data:
-        frames.append(
-            _load_and_prepare_file(
-                path,
-                decay_values=decay_values,
-            )
+        frame = _load_and_prepare_file(
+            path,
+            decay_values=decay_values,
+            use_precomputed=use_precomputed,
+            auto_cache=auto_cache,
         )
+        frames.append(frame)
 
     if not frames:
         raise ValueError("No training files were provided.")
 
     return pd.concat(frames, ignore_index=True)
 
+
+# ============================================================
+# Logistic fitting
+# ============================================================
 
 @dataclass
 class FitResult:
@@ -389,16 +627,16 @@ def _fit_logistic_mle(X, y, max_iter=500):
     )
 
 
+# ============================================================
+# Feature block builder
+# ============================================================
+
 class LKTFeatureBuilder:
     """
     Builds LKT-style feature blocks.
 
-    Includes:
-        KC-level learning features
-        problem-level learning features
-        interaction features
-        sequence-based spacing/forgetting proxies
-        decay-grid features
+    Important:
+        fit() must be called only on the current training data.
     """
 
     def __init__(self, decay_values=(0.1, 0.5, 0.8)):
@@ -464,7 +702,6 @@ class LKTFeatureBuilder:
         )
 
     def transform_blocks(self, df):
-        # KC-level prior counts
         kc_b4_correct = df["b4_correct"].astype(float).to_numpy()
         kc_b4_incorrect = df["b4_incorrect"].astype(float).to_numpy()
         kc_b4_total = kc_b4_correct + kc_b4_incorrect
@@ -473,7 +710,6 @@ class LKTFeatureBuilder:
         kc_logfail = np.log1p(kc_b4_incorrect)
         kc_logafm = np.log1p(kc_b4_total)
 
-        # Problem-level prior counts
         problem_b4_correct = df["problem_b4_correct"].astype(float).to_numpy()
         problem_b4_incorrect = df["problem_b4_incorrect"].astype(float).to_numpy()
         problem_b4_total = problem_b4_correct + problem_b4_incorrect
@@ -482,7 +718,6 @@ class LKTFeatureBuilder:
         problem_logfail = np.log1p(problem_b4_incorrect)
         problem_logafm = np.log1p(problem_b4_total)
 
-        # Sequence spacing proxies
         kc_recency = df["kc_recency"].astype(float).to_numpy()
         kc_loggap = df["kc_log_trial_gap"].astype(float).to_numpy()
 
@@ -494,11 +729,9 @@ class LKTFeatureBuilder:
 
         blocks = {}
 
-        # Intercepts / difficulty
         blocks["intercept-KC"] = skill_mat
         blocks["intercept-Problem"] = item_mat
 
-        # KC-level learning-history terms
         blocks["lineafm-KC"] = sparse.csr_matrix(kc_b4_total.reshape(-1, 1))
         blocks["logafm-KC"] = sparse.csr_matrix(kc_logafm.reshape(-1, 1))
         blocks["logsuc-KC"] = sparse.csr_matrix(kc_logsuc.reshape(-1, 1))
@@ -506,14 +739,12 @@ class LKTFeatureBuilder:
         blocks["linesuc-KC"] = sparse.csr_matrix(kc_b4_correct.reshape(-1, 1))
         blocks["linefail-KC"] = sparse.csr_matrix(kc_b4_incorrect.reshape(-1, 1))
 
-        # KC-level per-skill learning effects
         blocks["logsuc$-KC"] = skill_mat.multiply(kc_logsuc.reshape(-1, 1))
         blocks["logfail$-KC"] = skill_mat.multiply(kc_logfail.reshape(-1, 1))
         blocks["linesuc$-KC"] = skill_mat.multiply(kc_b4_correct.reshape(-1, 1))
         blocks["linefail$-KC"] = skill_mat.multiply(kc_b4_incorrect.reshape(-1, 1))
         blocks["logafm$-KC"] = skill_mat.multiply(kc_logafm.reshape(-1, 1))
 
-        # Problem-level learning-history terms
         blocks["lineafm-Problem"] = sparse.csr_matrix(problem_b4_total.reshape(-1, 1))
         blocks["logafm-Problem"] = sparse.csr_matrix(problem_logafm.reshape(-1, 1))
         blocks["logsuc-Problem"] = sparse.csr_matrix(problem_logsuc.reshape(-1, 1))
@@ -521,20 +752,17 @@ class LKTFeatureBuilder:
         blocks["linesuc-Problem"] = sparse.csr_matrix(problem_b4_correct.reshape(-1, 1))
         blocks["linefail-Problem"] = sparse.csr_matrix(problem_b4_incorrect.reshape(-1, 1))
 
-        # Problem-level per-problem learning effects
         blocks["logsuc$-Problem"] = item_mat.multiply(problem_logsuc.reshape(-1, 1))
         blocks["logfail$-Problem"] = item_mat.multiply(problem_logfail.reshape(-1, 1))
         blocks["linesuc$-Problem"] = item_mat.multiply(problem_b4_correct.reshape(-1, 1))
         blocks["linefail$-Problem"] = item_mat.multiply(problem_b4_incorrect.reshape(-1, 1))
         blocks["logafm$-Problem"] = item_mat.multiply(problem_logafm.reshape(-1, 1))
 
-        # Sequence-based spacing / forgetting proxies
         blocks["recency-KC"] = sparse.csr_matrix(kc_recency.reshape(-1, 1))
         blocks["loggap-KC"] = sparse.csr_matrix(kc_loggap.reshape(-1, 1))
         blocks["recency-Problem"] = sparse.csr_matrix(problem_recency.reshape(-1, 1))
         blocks["loggap-Problem"] = sparse.csr_matrix(problem_loggap.reshape(-1, 1))
 
-        # Interactions
         blocks["recency$-KC"] = skill_mat.multiply(kc_recency.reshape(-1, 1))
         blocks["loggap$-KC"] = skill_mat.multiply(kc_loggap.reshape(-1, 1))
 
@@ -549,7 +777,6 @@ class LKTFeatureBuilder:
         blocks["problem-logfail-by-KC"] = skill_mat.multiply(problem_logfail.reshape(-1, 1))
         blocks["problem-logafm-by-KC"] = skill_mat.multiply(problem_logafm.reshape(-1, 1))
 
-        # Decay-grid features
         for decay in self.decay_values:
             kc_ds = df[f"kc_decayed_success_{decay}"].astype(float).to_numpy()
             kc_dfail = df[f"kc_decayed_failure_{decay}"].astype(float).to_numpy()
@@ -580,6 +807,10 @@ class LKTFeatureBuilder:
 
         return blocks
 
+
+# ============================================================
+# Matrix helpers
+# ============================================================
 
 def _hstack_blocks(blocks):
     return sparse.hstack(blocks, format="csr")
@@ -612,6 +843,10 @@ def _build_design_matrix_with_slices(base_intercept, candidate_names, block_dict
     return X, slices
 
 
+# ============================================================
+# Stepwise / LASSO search
+# ============================================================
+
 def _stepwise_search(
     train_blocks,
     y_train,
@@ -621,20 +856,6 @@ def _stepwise_search(
     max_steps=8,
     optimizer_max_iter=500,
 ):
-    """
-    Bidirectional stepwise selection using BIC.
-
-    Lower BIC is better.
-
-    forv:
-        Minimum BIC improvement required to add a feature block.
-
-    bacv:
-        Minimum BIC improvement required to remove a feature block.
-
-    Larger forv/bacv values produce smaller models.
-    """
-
     n = len(y_train)
     base_intercept = sparse.csr_matrix(np.ones((n, 1)))
 
@@ -810,12 +1031,6 @@ def _lasso_search_predict(
     Cs=(0.001, 0.01, 0.1, 1.0, 10.0),
     max_iter=2000,
 ):
-    """
-    Optional LASSO search using sklearn LogisticRegressionCV.
-
-    This is not BIC stepwise. It is L1-regularized logistic regression.
-    """
-
     n_train = len(y_train)
     n_test = len(y_test)
 
@@ -874,37 +1089,22 @@ def _lasso_search_predict(
     return predictions, selected
 
 
+# ============================================================
+# Candidate feature presets
+# ============================================================
+
 def _make_candidate_names(decay_values, feature_preset="medium"):
-    """
-    Candidate feature presets.
-
-    compact:
-        KC-focused, fastest, fewest features.
-
-    medium:
-        Balanced half-sized version of the full search.
-        Keeps complete feature families while avoiding the most
-        high-dimensional problem-specific feature families.
-
-    full:
-        Original large search space.
-    """
-
     if feature_preset == "compact":
         candidates = [
-            # Skill/KC difficulty
             "intercept-KC",
 
-            # Core KC learning-history features
             "logafm-KC",
             "logsuc-KC",
             "logfail-KC",
 
-            # Per-KC learning effects
             "logsuc$-KC",
             "logfail$-KC",
 
-            # Sequence spacing proxies
             "recency-KC",
             "loggap-KC",
         ]
@@ -919,36 +1119,26 @@ def _make_candidate_names(decay_values, feature_preset="medium"):
 
     if feature_preset == "medium":
         candidates = [
-            # Skill/KC difficulty
             "intercept-KC",
 
-            # Core KC learning-history features
             "logafm-KC",
             "logsuc-KC",
             "logfail-KC",
             "linesuc-KC",
             "linefail-KC",
 
-            # Per-KC learning effects
-            # These allow different skills to have different
-            # learning/forgetting effects.
             "logsuc$-KC",
             "logfail$-KC",
             "logafm$-KC",
 
-            # Problem-level aggregate learning-history features.
-            # These are shared effects, not one coefficient per problem.
             "logafm-Problem",
             "logsuc-Problem",
             "logfail-Problem",
 
-            # Problem-to-KC interaction family.
-            # Kept as a balanced category, not just one observed winner.
             "problem-logsuc-by-KC",
             "problem-logfail-by-KC",
             "problem-logafm-by-KC",
 
-            # Sequence spacing proxies
             "recency-KC",
             "loggap-KC",
             "recency-Problem",
@@ -957,17 +1147,12 @@ def _make_candidate_names(decay_values, feature_preset="medium"):
 
         for decay in decay_values:
             candidates.extend([
-                # KC-level decayed memory
                 f"kc_decayed_success_{decay}-KC",
                 f"kc_decayed_failure_{decay}-KC",
 
-                # Problem-level decayed memory
                 f"problem_decayed_success_{decay}-Problem",
                 f"problem_decayed_failure_{decay}-Problem",
 
-                # Per-KC decayed memory.
-                # This family is useful because different skills may have
-                # different forgetting/decay behavior.
                 f"kc_decayed_success${decay}-KC",
                 f"kc_decayed_failure${decay}-KC",
             ])
@@ -1042,6 +1227,10 @@ def _make_candidate_names(decay_values, feature_preset="medium"):
     )
 
 
+# ============================================================
+# Main training function
+# ============================================================
+
 def train_predict_LKT(
     train_data,
     test_data,
@@ -1052,76 +1241,49 @@ def train_predict_LKT(
     search_method="stepwise",
     decay_values=(0.1, 0.5, 0.8),
     feature_preset="medium",
+    use_precomputed=True,
+    auto_cache=True,
 ):
     """
     Pure-Python LKT-style model.
 
-    Same interface as your previous R-based LKT wrapper:
-
-        preds, true_values = train_predict_LKT(train_data, test_data)
-
-    Parameters
-    ----------
-    train_data:
-        List of training CSV files, or a single CSV file.
-
-    test_data:
-        Test CSV file.
-
-    forv:
-        Minimum BIC improvement required to add a feature.
-        Larger values produce smaller models.
-
-    bacv:
-        Minimum BIC improvement required to remove a feature.
-        Larger values produce smaller models.
-
-    max_steps:
-        Maximum number of stepwise add/remove rounds.
-
-    optimizer_max_iter:
-        Maximum iterations for the logistic optimizer.
-
-    search_method:
-        "stepwise" = BIC bidirectional search.
-        "lasso"    = L1-regularized logistic regression search.
-
-    decay_values:
-        Decay grid used for decayed success/failure features.
-        Default is short, medium, and long memory.
-
-    feature_preset:
-        "compact" = fastest, smallest KC-focused model.
-        "medium"  = balanced default, roughly half-sized search.
-        "full"    = original large search space.
-
-    Returns
-    -------
-    predictions:
-        Predicted probabilities for the test set.
-
-    y_test:
-        True binary correctness values for the test set.
+    Main behavior:
+        - If auto_cache=True, it automatically creates and reuses cached
+          LKT feature files.
+        - It still rebuilds sparse feature blocks per fold using train-only mappings.
+        - It still runs feature selection per fold using only the training data.
     """
 
+    print("Loading training data...")
     train_df = _combine_train_files(
         train_data,
         decay_values=decay_values,
+        use_precomputed=use_precomputed,
+        auto_cache=auto_cache,
     )
+    print(f"Train data shape: {train_df.shape}")
 
+    print("Loading test data...")
     test_df = _load_and_prepare_file(
         test_data,
         decay_values=decay_values,
+        use_precomputed=use_precomputed,
+        auto_cache=auto_cache,
     )
+    print(f"Test data shape: {test_df.shape}")
 
     y_train = train_df["correct"].astype(int).to_numpy()
     y_test = test_df["correct"].astype(int).to_numpy()
 
+    print("Fitting feature builder on training data only...")
     feature_builder = LKTFeatureBuilder(
         decay_values=decay_values,
     ).fit(train_df)
 
+    print("Building train feature blocks...")
     train_blocks = feature_builder.transform_blocks(train_df)
+
+    print("Building test feature blocks using train-only mapping...")
     test_blocks = feature_builder.transform_blocks(test_df)
 
     candidate_names = _make_candidate_names(
@@ -1137,7 +1299,9 @@ def train_predict_LKT(
         f"candidate_blocks={len(candidate_names)}, "
         f"forv={forv}, "
         f"bacv={bacv}, "
-        f"max_steps={max_steps}"
+        f"max_steps={max_steps}, "
+        f"use_precomputed={use_precomputed}, "
+        f"auto_cache={auto_cache}"
     )
 
     if search_method == "lasso":
